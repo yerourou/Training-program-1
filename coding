@@ -1,1 +1,295 @@
-///
+#include<opencv2/imgcodecs.hpp>
+#include<opencv2/highgui.hpp>
+#include<opencv2/imgproc.hpp>
+#include<iostream>
+#include<string>
+#include<fstream>
+using namespace std;
+using namespace cv;
+
+
+//定义BankCard结构体便于使用
+struct BankCard
+{
+	Mat mat;  //ROI图片
+	Rect rect; //ROI所在矩形
+};
+
+
+//数字处理函数cut_numbers
+void cut_numbers(Mat temp, vector<BankCard>&Card_Temp)
+{
+	//图像处理部分
+
+	Mat gray_number;
+	cvtColor(temp, gray_number, COLOR_BGR2GRAY);
+    Mat thresh_number;
+	threshold(gray_number, thresh_number, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
+
+	//轮廓检测部分
+
+	vector <vector<Point>> contours_numbers;
+	findContours(thresh_number, contours_numbers, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+	//多次测试得到最佳数值，以便获得更好的图片效果
+	for (int i = 0; i < contours_numbers.size(); i++)
+	{
+		Rect rect = boundingRect(contours_numbers[i]);//boundingRect得到ROI最小长方形图像
+        double ratio = double(rect.width) / double(rect.height);
+		//cout << ratio << endl;   //打印出ratio便于查找最佳数值
+		//筛选出字符轮廓
+		if (ratio > 0.5 && ratio < 1)
+		{
+			Mat roi = temp(rect);  //将字符扣出，放入Card_Temp容器
+			Card_Temp.push_back({ roi ,rect });
+		}
+	}
+
+
+	//使用冒泡序列，进行字符排序。使其按一定的顺序进行排列。
+	for (int i = 0; i < Card_Temp.size() - 1; i++)
+	{
+		for (int j = 0; j < Card_Temp.size() - 1 - i; j++)
+		{
+			if (Card_Temp[j].rect.x > Card_Temp[j + 1].rect.x)
+			{
+				BankCard temp = Card_Temp[j];
+				Card_Temp[j] = Card_Temp[j + 1];
+				Card_Temp[j + 1] = temp;
+			}
+		}
+	}
+
+	//进行结果的查看，查看所截图像是否符合预期效果
+	/*for (int i = 0; i < Card_Temp.size(); i++)
+	{
+		imshow(to_string(i), Card_Temp[i].mat);
+		waitKey(0);
+	}*/
+
+
+}
+
+//银行卡图片处理函数
+void Cut_BankCard(Mat img_BankCard, vector<BankCard>&Block_ROI)
+{
+	//BankCard的图像处理
+	Mat gray_BankCard;
+	cvtColor(img_BankCard, gray_BankCard, COLOR_BGR2GRAY);
+	//imshow("gray_BankCard", gray_BankCard);
+	Mat gaussian_BankCard;
+	GaussianBlur(gray_BankCard, gaussian_BankCard, Size(3, 3), 0);
+	//imshow("gaussian_BankCard", gaussian_BankCard);
+	Mat thresh_BankCard;
+	threshold(gaussian_BankCard, thresh_BankCard, 0, 255, THRESH_BINARY | THRESH_OTSU);
+	//imshow("thresh_BankCard", thresh_BankCard);
+	Mat close_BankCard;
+	Mat kernel_BankCard = getStructuringElement(MORPH_RECT, Size(20, 8));
+	//使用闭操作使得图像轮廓连接成块
+	morphologyEx(thresh_BankCard, close_BankCard, MORPH_CLOSE, kernel_BankCard);
+	//imshow("close_BankCard", close_BankCard);
+	vector<vector<Point>>contours_BankCard;
+	findContours(close_BankCard, contours_BankCard, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+	//cout << contours.size() << endl;
+    
+	for (int i = 0; i < contours_BankCard.size(); i++)
+	{
+		//通过面积、长宽比筛选出银行卡号区域，以便获得更好的图像效果
+		double area = contourArea(contours_BankCard[i]);
+		/*	cout << "轮廓面积" << endl;
+			cout << area << endl;*/  //打印数值，便于查找最佳数据。
+		if (area > 800 && area < 3000)
+		{
+			Rect rect = boundingRect(contours_BankCard[i]);//查找BankCard的ROI的最小长方形
+			float ratio = double(rect.width) / double(rect.height);
+			//cout << ratio << endl;  //打印ratio，便于查找ratio的最佳数值
+			if (ratio > 2.5&& ratio < 3.1)
+			{
+
+				Mat ROI = img_BankCard(rect);
+
+				Block_ROI.push_back({ ROI ,rect });////将字符扣出，放入Block_ROI容器
+			}
+		}
+	}
+	//使用冒泡序列，进行字符排序。使其按一定的顺序进行排列。
+	for (int i = 0; i < Block_ROI.size() - 1; i++)
+	{
+		for (int j = 0; j < Block_ROI.size() - 1 - i; j++)
+		{
+			if (Block_ROI[j].rect.x > Block_ROI[j + 1].rect.x)
+			{
+				BankCard temp = Block_ROI[j];
+				Block_ROI[j] = Block_ROI[j + 1];
+				Block_ROI[j + 1] = temp;
+			}
+		}
+	}
+    //cout << Block_ROI.size() << endl;
+	//Block_ROI图像处理后，展示图像
+	//for (int i = 0; i < Block_ROI.size(); i++)
+	//{
+	//	imshow(to_string(i), Block_ROI[i].mat);
+	//	waitKey(0);
+
+	//}
+
+
+}
+
+//银行卡字符分割
+void Cut_Slice(vector<BankCard>&Block_ROI, vector<BankCard>&Slice_ROI)
+{
+	for (int i = 0; i < Block_ROI.size(); i++)
+	{
+		Mat roi_gray;
+		cvtColor(Block_ROI[i].mat, roi_gray, COLOR_BGR2GRAY);
+
+		Mat roi_thresh;
+		threshold(roi_gray, roi_thresh, 0, 255, THRESH_BINARY | THRESH_OTSU);
+
+		vector <vector<Point>> contours1;
+		findContours(roi_thresh, contours1, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+		for (int j = 0; j < contours1.size(); j++)
+		{
+			Rect rect = boundingRect(contours1[j]);
+			//字符相对于银行卡所在的位置
+			Rect roi_rect(rect.x + Block_ROI[i].rect.x, rect.y + Block_ROI[i].rect.y, rect.width, rect.height);
+			Mat r_roi = Block_ROI[i].mat(rect);
+			Slice_ROI.push_back({ r_roi ,roi_rect });
+		}
+	}
+
+	for (int i = 0; i < Slice_ROI.size() - 1; i++)
+	{
+		for (int j = 0; j < Slice_ROI.size() - 1 - i; j++)
+		{
+			if (Slice_ROI[j].rect.x > Slice_ROI[j + 1].rect.x)
+			{
+				BankCard temp = Slice_ROI[j];
+				Slice_ROI[j] = Slice_ROI[j + 1];
+				Slice_ROI[j + 1] = temp;
+			}
+		}
+	}
+
+	//  for (int i = 0; i < Slice_ROI.size(); i++)
+	//{
+	//	imshow(to_string(i), Slice_ROI[i].mat);
+	//	waitKey(0);
+	//}
+
+}
+
+//读取数据
+void read_data(string filename, vector<int>&label)
+{
+	ifstream in;
+	in.open(filename);
+	if (!in.is_open())
+	{
+		cout << "can not open the file!" << endl;
+
+	}
+
+	int data[10] = { 0 };
+	for (int i = 0; i < 10; i++)
+	{
+		in >> data[i];
+	}
+	in.close();
+
+	for (int i = 0; i < 10; i++)
+	{
+		label.push_back(data[i]);
+	}
+}
+
+
+void Template_Matching(vector<BankCard>&Card_Temp, vector<BankCard>&Block_ROI, vector<BankCard>&Slice_ROI, vector<int>&result_index)
+{
+	for (int i = 0; i < Slice_ROI.size(); i++)
+	{
+		//将字符resize成合适大小，利于识别
+		resize(Slice_ROI[i].mat, Slice_ROI[i].mat, Size(60, 80), 1, 1, INTER_LINEAR);
+
+		Mat gray1;
+		cvtColor(Slice_ROI[i].mat, gray1, COLOR_BGR2GRAY);
+
+		int maxIndex = 0;
+		double Max = 0.0;
+		for (int j = 0; j < Card_Temp.size(); j++)
+		{
+			resize(Card_Temp[j].mat, Card_Temp[j].mat, Size(60, 80), 1, 1, INTER_LINEAR);
+
+			Mat temp_gray1;
+			cvtColor(Card_Temp[j].mat, temp_gray1, COLOR_BGR2GRAY);
+
+			//进行模板匹配，识别数字
+			Mat result;
+			matchTemplate(gray1, temp_gray1, result, TM_SQDIFF_NORMED);
+			double minVal, maxVal;
+			Point minLoc, maxLoc;
+
+			minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc);
+
+			//得分最大的视为匹配结果
+			if (maxVal > Max)
+			{
+				Max = maxVal;
+				maxIndex = j; //匹配结果
+
+			}
+
+		}
+		result_index.push_back(maxIndex);
+
+	}
+
+}
+
+int main()
+{
+    //数字处理部分
+	Mat temp;
+	temp = imread("C:/Users/86181/Desktop/program1/ocrareference.png");
+	vector<BankCard> Card_Temp;
+	cut_numbers(temp, Card_Temp);
+
+
+	//银行卡处理
+	Mat img_BankCard = imread("C:/Users/86181/Desktop/program1/creditcard05.png");
+	vector<BankCard>Block_ROI;
+	//imshow("src原图", img_BankCard);
+	Cut_BankCard(img_BankCard, Block_ROI);
+
+
+	//银行卡字符片段处理
+	vector<BankCard>Slice_ROI;
+	Cut_Slice(Block_ROI, Slice_ROI);
+
+	//数据读取
+	vector<int>label;
+	string filename= "C:/Users/86181/Desktop/peishun/number.txt";
+	read_data(filename, label);
+
+	//数字匹配
+	vector<int>result_index;
+	Template_Matching(Card_Temp, Block_ROI, Slice_ROI, result_index);
+
+    //结果展示
+	for (int i = 0; i < Block_ROI.size(); i++)
+	{
+		rectangle(img_BankCard, Rect(Block_ROI[i].rect.tl(), Block_ROI[i].rect.br()), Scalar(0, 255, 0), 2);
+	}
+	for (int i = 0; i < Slice_ROI.size(); i++)
+	{
+
+		cout << label[result_index[i]] << " ";
+		putText(img_BankCard, to_string(label[result_index[i]]), Point(Slice_ROI[i].rect.tl()), FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
+	}
+
+	imshow("SHOW BANKCARD RESULT", img_BankCard);
+	waitKey(0);
+	destroyAllWindows();
+
+}
